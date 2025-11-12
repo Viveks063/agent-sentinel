@@ -1,5 +1,4 @@
-// src/components/Dashboard.jsx
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Container,
   Grid,
@@ -7,197 +6,429 @@ import {
   Typography,
   CircularProgress,
   Alert,
-  TextField,
-  InputAdornment,
+  Paper,
   Button,
   ButtonGroup,
-  Paper
+  Card,
+  CardContent,
+  LinearProgress,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  Chip,
+  IconButton,
+  Divider
 } from '@mui/material';
 import {
   Newspaper,
   VerifiedUser,
   Warning,
-  Search as SearchIcon
+  Refresh as RefreshIcon,
+  OpenInNew,
+  Error as ErrorIcon,
+  AccessTime
 } from '@mui/icons-material';
-import { Header } from './Header';
-import { MetricsCard } from './MetricsCard';
-import { NewsCard } from './NewsCard';
-import { useNews } from '../hooks/useNews';
 
 export const Dashboard = () => {
-  const { news, loading, error, lastUpdated, refreshNews, searchNews } = useNews('general');
-  const [searchQuery, setSearchQuery] = useState('');
-  const [selectedCategory, setSelectedCategory] = useState('ALL');
+  const [news, setNews] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [lastUpdated, setLastUpdated] = useState(null);
+  const [selectedAlert, setSelectedAlert] = useState(null);
+  const [openDialog, setOpenDialog] = useState(false);
 
-  const categories = ['ALL', 'HEALTH', 'POLITICS', 'BUSINESS', 'TECHNOLOGY'];
+  const fetchAlerts = async () => {
+    try {
+      setLoading(true);
+      setError(null);
 
-  // Calculate metrics
-  const metrics = {
-    total: news.length,
-    verified: news.filter(n => n.verified).length,
-    suspicious: news.filter(n => n.riskLevel === 'HIGH' || n.riskLevel === 'CRITICAL').length
-  };
+      const endpoint = "http://127.0.0.1:8000/alerts";
+      
+      console.log(`📡 Fetching from ${endpoint}...`);
+      
+      const response = await fetch(endpoint, {
+        method: "GET",
+        headers: { "Content-Type": "application/json" }
+      });
 
-  const handleSearch = () => {
-    if (searchQuery.trim()) {
-      searchNews(searchQuery);
+      if (!response.ok) {
+        throw new Error(`Backend error: ${response.status}`);
+      }
+
+      const data = await response.json();
+      console.log("✅ Response:", data);
+
+      const alerts = data.alerts || [];
+      
+      // CRITICAL FIX: Map API response to proper format
+      const transformed = alerts.map((alert, idx) => {
+        const sourceName = typeof alert.source === 'object' 
+          ? alert.source?.name || 'Unknown'
+          : alert.source || 'Unknown';
+
+        return {
+          id: alert.id || `alert_${idx}`,
+          title: alert.title || "Untitled Alert",  // ✅ GET TITLE FROM ALERT
+          description: alert.report_summary || alert.report || "No summary available",  // ✅ GET SUMMARY
+          source: sourceName,
+          url: alert.url || "#",
+          publishedAt: alert.published_at || new Date().toISOString(),
+          severity: alert.severity || "MEDIUM",
+          falsehood_score: alert.falsehood_score || 0.33,
+          virality_score: alert.virality_score || 0.33,
+          full_report: alert.report || alert.report_summary || "No report available"
+        };
+      });
+
+      console.log("📊 Transformed:", transformed);
+      setNews(transformed);
+      setLastUpdated(new Date());
+
+    } catch (err) {
+      console.error("❌ Error:", err);
+      setError(err.message);
+      setNews([]);
+    } finally {
+      setLoading(false);
     }
   };
 
-  const handleCategoryChange = (category) => {
-    setSelectedCategory(category);
-    // Filter logic would go here
+  useEffect(() => {
+    fetchAlerts();
+  }, []);
+
+  const metrics = {
+    total: news.length,
+    critical: news.filter(n => n.severity === 'CRITICAL').length,
+    suspicious: news.filter(n => ['CRITICAL', 'HIGH'].includes(n.severity)).length
   };
 
-  const filteredNews = selectedCategory === 'ALL' 
-    ? news 
-    : news.filter(article => article.category === selectedCategory);
+  const getSeverityColor = (severity) => {
+    const colors = {
+      CRITICAL: '#DC2626',
+      HIGH: '#EA580C',
+      MEDIUM: '#F59E0B',
+      LOW: '#10B981'
+    };
+    return colors[severity] || '#F59E0B';
+  };
+
+  const getSeverityIcon = (severity) => {
+    return severity === 'CRITICAL' ? <ErrorIcon /> : <Warning />;
+  };
 
   return (
-    <Box sx={{ minHeight: '100vh', bgcolor: '#0f172a' }}>
-      <Header 
-        onRefresh={refreshNews} 
-        lastUpdated={lastUpdated}
-        isLive={true}
-      />
+    <Box sx={{ minHeight: '100vh', bgcolor: '#0f172a', py: 4 }}>
+      <Container maxWidth="xl">
+        
+        {/* Header */}
+        <Box sx={{ mb: 4 }}>
+          <Typography variant="h3" sx={{ fontWeight: 700, mb: 1, color: 'white' }}>
+            🚨 Agent Sentinel
+          </Typography>
+          <Typography variant="subtitle1" color="textSecondary">
+            Viral Fake News Detection System - Live Monitoring
+          </Typography>
+        </Box>
 
-      <Container maxWidth="xl" sx={{ py: 4 }}>
-        {/* Metrics */}
-        <Grid container spacing={3} sx={{ mb: 4 }}>
-          <Grid item xs={12} sm={4}>
-            <MetricsCard
-              title="Total News"
-              value={metrics.total}
-              subtitle="articles monitored"
-              icon={Newspaper}
-              color="#3B82F6"
-            />
-          </Grid>
-          <Grid item xs={12} sm={4}>
-            <MetricsCard
-              title="Verified"
-              value={metrics.verified}
-              subtitle="sources confirmed"
-              icon={VerifiedUser}
-              color="#10B981"
-            />
-          </Grid>
-          <Grid item xs={12} sm={4}>
-            <MetricsCard
-              title="Suspicious"
-              value={metrics.suspicious}
-              subtitle="flagged for review"
-              icon={Warning}
-              color="#EF4444"
-            />
-          </Grid>
-        </Grid>
-
-        {/* Search & Filters */}
+        {/* Stats */}
         <Paper
-          elevation={0}
           sx={{
             p: 3,
             mb: 4,
-            background: 'linear-gradient(135deg, rgba(30, 41, 59, 0.8) 0%, rgba(15, 23, 42, 0.8) 100%)',
-            backdropFilter: 'blur(10px)',
-            border: '1px solid rgba(255, 255, 255, 0.1)',
-            borderRadius: 3
+            background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+            color: 'white',
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center'
           }}
         >
-          <Grid container spacing={2} alignItems="center">
-            <Grid item xs={12} md={6}>
-              <TextField
-                fullWidth
-                placeholder="Search news..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
-                InputProps={{
-                  startAdornment: (
-                    <InputAdornment position="start">
-                      <SearchIcon sx={{ color: 'rgba(255, 255, 255, 0.5)' }} />
-                    </InputAdornment>
-                  ),
-                  sx: {
-                    color: 'white',
-                    bgcolor: 'rgba(15, 23, 42, 0.5)',
-                    borderRadius: 2,
-                    '& fieldset': { border: 'none' }
-                  }
-                }}
-              />
-            </Grid>
-            <Grid item xs={12} md={6}>
-              <Box sx={{ display: 'flex', justifyContent: { xs: 'flex-start', md: 'flex-end' } }}>
-                <ButtonGroup variant="outlined">
-                  {categories.map((cat) => (
-                    <Button
-                      key={cat}
-                      onClick={() => handleCategoryChange(cat)}
-                      sx={{
-                        color: selectedCategory === cat ? 'white' : 'rgba(255, 255, 255, 0.6)',
-                        bgcolor: selectedCategory === cat ? 'rgba(59, 130, 246, 0.3)' : 'transparent',
-                        borderColor: 'rgba(255, 255, 255, 0.2)',
-                        '&:hover': {
-                          bgcolor: 'rgba(59, 130, 246, 0.2)',
-                          borderColor: 'rgba(255, 255, 255, 0.3)'
-                        }
-                      }}
-                    >
-                      {cat}
-                    </Button>
-                  ))}
-                </ButtonGroup>
-              </Box>
-            </Grid>
-          </Grid>
+          <Box>
+            <Typography variant="h4" sx={{ fontWeight: 700 }}>
+              {news.length}
+            </Typography>
+            <Typography variant="body2">
+              Active Alerts {lastUpdated && `• Last: ${lastUpdated.toLocaleTimeString()}`}
+            </Typography>
+          </Box>
+          <Button
+            variant="contained"
+            startIcon={<RefreshIcon />}
+            onClick={fetchAlerts}
+            disabled={loading}
+            sx={{
+              bgcolor: 'rgba(255,255,255,0.2)',
+              '&:hover': { bgcolor: 'rgba(255,255,255,0.3)' }
+            }}
+          >
+            {loading ? <CircularProgress size={24} color="inherit" /> : 'Refresh'}
+          </Button>
         </Paper>
 
-        {/* Error Message */}
+        {/* Alert Banner */}
+        {metrics.critical > 0 && (
+          <Alert 
+            severity="error" 
+            sx={{ 
+              mb: 4,
+              bgcolor: 'rgba(239, 68, 68, 0.1)',
+              borderColor: '#EF4444',
+              color: 'white'
+            }}
+          >
+            🚨 <strong>{metrics.critical} CRITICAL</strong> viral fake news alert(s) detected!
+          </Alert>
+        )}
+
+        {/* Error State */}
         {error && (
           <Alert severity="error" sx={{ mb: 4 }}>
-            {error}
+            ⚠️ {error}
           </Alert>
         )}
 
         {/* Loading State */}
-        {loading && (
-          <Box sx={{ display: 'flex', justifyContent: 'center', py: 8 }}>
-            <CircularProgress size={60} sx={{ color: '#3B82F6' }} />
+        {loading && news.length === 0 && (
+          <Box sx={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', py: 8 }}>
+            <CircularProgress size={60} sx={{ color: '#3B82F6', mb: 2 }} />
+            <Typography sx={{ color: 'rgba(255, 255, 255, 0.6)' }}>
+              Scanning viral news for misinformation...
+            </Typography>
           </Box>
         )}
 
-        {/* News Grid */}
-        {!loading && filteredNews.length > 0 && (
-          <Grid container spacing={3}>
-            {filteredNews.map((article) => (
-              <Grid item xs={12} sm={6} lg={4} key={article.id}>
-                <NewsCard article={article} />
-              </Grid>
-            ))}
-          </Grid>
+        {/* Empty State */}
+        {!loading && news.length === 0 && !error && (
+          <Paper sx={{ p: 4, textAlign: 'center', bgcolor: 'rgba(16, 185, 129, 0.1)' }}>
+            <VerifiedUser sx={{ fontSize: 80, color: '#10B981', mb: 2 }} />
+            <Typography variant="h5" sx={{ color: 'white', mb: 1, fontWeight: 600 }}>
+              ✅ No Alerts Found
+            </Typography>
+            <Typography variant="body2" sx={{ color: 'rgba(255, 255, 255, 0.6)' }}>
+              No viral fake news detected. System is monitoring 9 sources...
+            </Typography>
+          </Paper>
         )}
 
-        {/* No News Found */}
-        {!loading && filteredNews.length === 0 && (
-          <Box
-            sx={{
-              textAlign: 'center',
-              py: 8,
-              px: 2
-            }}
-          >
-            <Newspaper sx={{ fontSize: 80, color: 'rgba(255, 255, 255, 0.2)', mb: 2 }} />
-            <Typography variant="h5" sx={{ color: 'rgba(255, 255, 255, 0.6)', mb: 1 }}>
-              No news articles found
+        {/* Alerts Grid */}
+        {news.length > 0 && (
+          <>
+            <Typography 
+              variant="h6" 
+              sx={{ 
+                color: 'white', 
+                mb: 3,
+                display: 'flex',
+                alignItems: 'center',
+                gap: 1
+              }}
+            >
+              🚨 Viral Fake News Alerts 
+              <Typography 
+                variant="caption" 
+                sx={{ 
+                  color: 'rgba(255, 255, 255, 0.5)',
+                  ml: 'auto'
+                }}
+              >
+                {news.length} alert{news.length !== 1 ? 's' : ''}
+              </Typography>
             </Typography>
-            <Typography variant="body2" sx={{ color: 'rgba(255, 255, 255, 0.4)' }}>
-              Try adjusting your search or filters
-            </Typography>
-          </Box>
+
+            <Grid container spacing={3}>
+              {news.map((alert, idx) => (
+                <Grid item xs={12} sm={6} lg={4} key={alert.id || idx}>
+                  <Card
+                    sx={{
+                      height: '100%',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      background: `linear-gradient(135deg, ${getSeverityColor(alert.severity)}15 0%, ${getSeverityColor(alert.severity)}05 100%)`,
+                      border: `2px solid ${getSeverityColor(alert.severity)}`,
+                      borderRadius: 2,
+                      transition: 'all 0.3s ease',
+                      cursor: 'pointer',
+                      '&:hover': {
+                        transform: 'translateY(-4px)',
+                        boxShadow: `0 12px 32px ${getSeverityColor(alert.severity)}40`
+                      }
+                    }}
+                  >
+                    <CardContent sx={{ flexGrow: 1, display: 'flex', flexDirection: 'column' }}>
+                      {/* Header */}
+                      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 2 }}>
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                          {getSeverityIcon(alert.severity)}
+                          <Chip
+                            label={alert.severity}
+                            size="small"
+                            sx={{
+                              bgcolor: `${getSeverityColor(alert.severity)}30`,
+                              color: getSeverityColor(alert.severity),
+                              fontWeight: 700
+                            }}
+                          />
+                        </Box>
+                        
+                        <Box sx={{ display: 'flex', gap: 1 }}>
+                          <Chip
+                            label={`${Math.round((alert.falsehood_score || 0) * 100)}% Fake`}
+                            size="small"
+                            variant="outlined"
+                            sx={{ borderColor: getSeverityColor(alert.severity), color: getSeverityColor(alert.severity) }}
+                          />
+                          <Chip
+                            label={`${Math.round((alert.virality_score || 0) * 100)}% Viral`}
+                            size="small"
+                            variant="outlined"
+                            sx={{ borderColor: '#F59E0B', color: '#F59E0B' }}
+                          />
+                        </Box>
+                      </Box>
+
+                      {/* Title - NOW SHOWING ACTUAL FAKE NEWS */}
+                      <Typography
+                        variant="h6"
+                        sx={{
+                          color: 'white',
+                          fontWeight: 600,
+                          mb: 1.5,
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          display: '-webkit-box',
+                          WebkitLineClamp: 2,
+                          WebkitBoxOrient: 'vertical'
+                        }}
+                      >
+                        {alert.title || 'Untitled Alert'}
+                      </Typography>
+
+                      {/* Description - NOW SHOWING SUMMARY */}
+                      <Typography
+                        variant="body2"
+                        sx={{
+                          color: 'rgba(255, 255, 255, 0.7)',
+                          mb: 2,
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          display: '-webkit-box',
+                          WebkitLineClamp: 3,
+                          WebkitBoxOrient: 'vertical',
+                          flexGrow: 1
+                        }}
+                      >
+                        {alert.description || 'No summary available'}
+                      </Typography>
+
+                      {/* Scores */}
+                      <Box sx={{ mb: 2 }}>
+                        <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
+                          <Typography variant="caption" sx={{ color: 'rgba(255, 255, 255, 0.6)' }}>
+                            Falsehood
+                          </Typography>
+                          <Typography variant="caption" sx={{ fontWeight: 600, color: getSeverityColor(alert.severity) }}>
+                            {Math.round((alert.falsehood_score || 0) * 100)}%
+                          </Typography>
+                        </Box>
+                        <LinearProgress
+                          variant="determinate"
+                          value={Math.round((alert.falsehood_score || 0) * 100)}
+                          sx={{
+                            height: 6,
+                            borderRadius: 3,
+                            bgcolor: 'rgba(255, 255, 255, 0.1)',
+                            '& .MuiLinearProgress-bar': {
+                              background: getSeverityColor(alert.severity),
+                              borderRadius: 3
+                            }
+                          }}
+                        />
+                      </Box>
+
+                      <Divider sx={{ bgcolor: 'rgba(255, 255, 255, 0.1)', my: 2 }} />
+
+                      {/* Footer */}
+                      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+                        <Typography variant="caption" sx={{ color: 'rgba(255, 255, 255, 0.5)' }}>
+                          📡 {alert.source}
+                        </Typography>
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                          <AccessTime sx={{ fontSize: 14, color: 'rgba(255, 255, 255, 0.4)' }} />
+                          <Typography variant="caption" sx={{ color: 'rgba(255, 255, 255, 0.4)' }}>
+                            {new Date(alert.publishedAt).toLocaleTimeString()}
+                          </Typography>
+                        </Box>
+                      </Box>
+
+                      {/* Actions */}
+                      <Box sx={{ display: 'flex', gap: 1 }}>
+                        <Button
+                          variant="contained"
+                          size="small"
+                          fullWidth
+                          onClick={() => {
+                            setSelectedAlert(alert);
+                            setOpenDialog(true);
+                          }}
+                          sx={{
+                            bgcolor: getSeverityColor(alert.severity),
+                            '&:hover': { opacity: 0.9 }
+                          }}
+                        >
+                          Full Report
+                        </Button>
+                        {alert.url && alert.url !== '#' && (
+                          <IconButton
+                            component="a"
+                            href={alert.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            size="small"
+                            sx={{
+                              color: getSeverityColor(alert.severity),
+                              border: `1px solid ${getSeverityColor(alert.severity)}`,
+                              '&:hover': { bgcolor: `${getSeverityColor(alert.severity)}20` }
+                            }}
+                          >
+                            <OpenInNew fontSize="small" />
+                          </IconButton>
+                        )}
+                      </Box>
+                    </CardContent>
+                  </Card>
+                </Grid>
+              ))}
+            </Grid>
+          </>
         )}
       </Container>
+
+      {/* Full Report Dialog */}
+      <Dialog open={openDialog} onClose={() => setOpenDialog(false)} maxWidth="sm" fullWidth>
+        <DialogTitle sx={{ fontWeight: 700, bgcolor: '#0f172a', color: 'white' }}>
+          🚨 Full Misinformation Report
+        </DialogTitle>
+        <DialogContent dividers sx={{ bgcolor: '#0f172a', color: 'white' }}>
+          <Box sx={{ whiteSpace: 'pre-wrap', fontSize: '0.875rem', fontFamily: 'monospace', maxHeight: '60vh', overflow: 'auto' }}>
+            {selectedAlert?.full_report || 'No report available'}
+          </Box>
+        </DialogContent>
+        <DialogActions sx={{ bgcolor: '#0f172a' }}>
+          <Button onClick={() => setOpenDialog(false)}>Close</Button>
+          {selectedAlert?.url && selectedAlert.url !== '#' && (
+            <Button
+              href={selectedAlert.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              variant="contained"
+              endIcon={<OpenInNew />}
+            >
+              View Source
+            </Button>
+          )}
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 };
